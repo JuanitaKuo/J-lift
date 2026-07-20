@@ -105,9 +105,24 @@ const BODY_UNIT = { weight: 'kg', bodyFat: '%', waist: 'cm', navel: 'cm', hip: '
 function tabLabel(k) { const m = BODY_TABS.find(t => t[0] === k); return m ? m[1] : k; }
 function aggregatePeriod(series, period) {
   if (!series.length) return [];
-  if (period === 'all') { const byM = {}; for (const p of series) { const m = p.date.slice(0, 7); (byM[m] = byM[m] || []).push(p); } return Object.keys(byM).sort().map(m => byM[m][byM[m].length - 1]); }
-  if (period === '90') { const byW = {}; for (const p of series) { const dt = new Date(p.date + 'T00:00:00'); const wk = Math.floor((dt - new Date(dt.getFullYear() + '-01-01')) / (7 * 864e5)); (byW[wk] = byW[wk] || []).push(p); } return Object.keys(byW).sort().map(w => byW[w][byW[w].length - 1]); }
-  return series; // 7 / 30 每日
+  // 先按「近 N 天」窗口过滤（today 起算），再聚合降采样——避免切 7/30/90 天图表几乎一致
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const winDays = { '7': 7, '30': 30, '90': 90 }[period];
+  let win = series;
+  if (winDays) {
+    const cutoff = new Date(today.getTime() - (winDays - 1) * 86400000);
+    win = series.filter(p => {
+      const d = new Date(p.date + 'T00:00:00'); d.setHours(0, 0, 0, 0);
+      return d >= cutoff && d <= today;
+    });
+  }
+  if (period === 'all') return series;          // 全部：全量
+  if (period === '90') {                        // 90 天：窗口内按周降采样
+    const byW = {};
+    for (const p of win) { const dt = new Date(p.date + 'T00:00:00'); const wk = Math.floor((dt - new Date(dt.getFullYear() + '-01-01')) / (7 * 864e5)); (byW[wk] = byW[wk] || []).push(p); }
+    return Object.keys(byW).sort().map(w => byW[w][byW[w].length - 1]);
+  }
+  return win;                                   // 7 / 30 天：窗口内每日
 }
 function trendTicks(n) {
   if (n <= 1) return [];
@@ -664,7 +679,7 @@ function bindPage() {
   document.querySelectorAll('[data-act]').forEach(b => b.addEventListener('click', () => handleAct(b.dataset.act, b)));
   document.querySelectorAll('[data-nav]').forEach(b => b.addEventListener('click', () => go(b.dataset.nav)));
   document.querySelectorAll('[data-open]').forEach(b => b.addEventListener('click', () => openDetail(b.dataset.open)));
-  document.querySelectorAll('[data-del]').forEach(b => b.addEventListener('click', (e) => { e.stopPropagation(); deleteSession(b.dataset.del); }));
+  document.querySelectorAll('[data-del]').forEach(b => b.addEventListener('click', (e) => { e.stopPropagation(); requestDel(b.dataset.del); }));
 
   const search = document.getElementById('rec-search');
   if (search) search.addEventListener('input', (e) => { recQuery = e.target.value; renderRecordsLight(); });
@@ -724,6 +739,8 @@ function handleAct(act, el) {
     case 'hr-prompt-connect': hideHrPrompt(); discardLive(); go('profile'); toast('请在「我的」页连接心率带'); break;
     case 'leave-cancel': cancelLeave(); break;
     case 'leave-confirm': confirmLeave(); break;
+    case 'del-cancel': cancelDel(); break;
+    case 'del-confirm': confirmDel(); break;
     case 'live-pause': state.live.paused ? resumeLive() : pauseLive(); break;
     case 'end-live': requestEndLive(); break;
     case 'end-confirm': confirmEndLive(); break;
@@ -736,7 +753,7 @@ function handleAct(act, el) {
     }
     case 'open-library': openSheet('library'); break;
     case 'detail-back': go(state.detailFrom || 'records'); break;
-    case 'detail-del': deleteSession(state.detailId); break;
+    case 'detail-del': requestDel(state.detailId); break;
     case 'rec-clear': recFilter = 'all'; recQuery = ''; renderRecordsLight(); break;
     case 'add-set': {
       const r = document.getElementById('rep-in'), w = document.getElementById('wt-in');
@@ -797,6 +814,26 @@ function confirmLeave() {
   if (m) m.classList.remove('show');
   discardLive();
   toast('已退出训练');
+}
+/* ---------- 锻炼记录删除：二次确认（取消 / 确定） ---------- */
+let pendingDelId = null;
+function requestDel(id) {
+  const rec = state.sessions.find(s => s.id === id);
+  if (!rec || !canDelete(rec)) { toast('该记录不可删除'); return; }
+  pendingDelId = id;
+  const m = document.getElementById('del-confirm');
+  if (m) m.classList.add('show');
+}
+function cancelDel() {
+  const m = document.getElementById('del-confirm');
+  if (m) m.classList.remove('show');
+  pendingDelId = null;
+}
+function confirmDel() {
+  const m = document.getElementById('del-confirm');
+  if (m) m.classList.remove('show');
+  const id = pendingDelId; pendingDelId = null;
+  if (id) deleteSession(id);
 }
 
 /* ---------- 实时训练：长按结束（转圈 + 防误触确认） ---------- */
@@ -861,25 +898,30 @@ function openSheet(kind) {
       <div class="field"><label>或新增自定义动作</label><input id="f-new" placeholder="动作名"></div>
       <div class="sheet-actions"><button class="btn-ghost" data-sheet-close>取消</button><button class="btn-mint" data-sheet-save="action">确定</button></div>`;
   } else if (kind === 'library') {
+    const libItems = state.exercises.length
+      ? state.exercises.map(e => `<div class="lib-item"><b>${e.name}</b></div>`).join('')
+      : '<div class="empty-mini">暂无动作</div>';
     html = `<h3>动作库</h3>
-      <div class="lib-list">${state.exercises.map(e => `<div class="lib-item"><b>${e.name}</b><span>${e.category}${e.custom ? ' · 自定义' : ''}</span></div>`).join('')}</div>
+      <div class="lib-list">${libItems}</div>
       <div class="sheet-actions"><button class="btn-ghost" data-sheet-close>关闭</button></div>`;
   } else if (kind === 'voicesim') {
     const IL = { record: '录入动作组', switch_action: '切换动作', switch_set: '切换组', add_action: '新增动作', pause: '暂停', resume: '继续', end: '结束' };
     const items = VOICE_PRESETS.map(p => '<button class="voice-opt" data-voice="' + p.text + '"><b>' + p.text + '</b><span>' + (IL[p.intent] || p.intent) + '</span></button>').join('');
     html = '<h3>模拟语音指令</h3><p class="sheet-hint">点选一条，演示端侧 ASR → NLU → 状态机闭环（真实设备由 VAD 持续监听触发）</p><div class="voice-list">' + items + '</div><div class="sheet-actions"><button class="btn-ghost" data-sheet-close>关闭</button></div>';
   } else if (kind === 'body') {
-    const last = d => { const s = metricSeries(d); return s.length ? s[s.length - 1].value : ''; };
-    html = '<h3>录入身体指标</h3>' +
-      '<div class="field"><label>测量日期</label><input id="b-date" type="date" value="' + todayStr() + '"></div>' +
-      '<div class="field"><label>体重 (kg)</label><input id="b-weight" type="number" step="0.1" value="' + last('weight') + '"></div>' +
-      '<div class="field"><label>体脂率 (%)</label><input id="b-fat" type="number" step="0.1" value="' + last('bodyFat') + '"></div>' +
-      '<div class="field"><label>腰围 (cm)</label><input id="b-waist" type="number" step="0.1" value="' + last('waist') + '"></div>' +
-      '<div class="field"><label>脐围 (cm)</label><input id="b-navel" type="number" step="0.1" value="' + last('navel') + '"></div>' +
-      '<div class="field"><label>臀围 (cm)</label><input id="b-hip" type="number" step="0.1" value="' + last('hip') + '"></div>' +
-      '<div class="field"><label>臂围 (cm)</label><input id="b-arm" type="number" step="0.1" value="' + last('arm') + '"></div>' +
-      '<div class="field"><label>大腿围 (cm)</label><input id="b-thigh" type="number" step="0.1" value="' + last('thigh') + '"></div>' +
-      '<div class="sheet-actions"><button class="btn-ghost" data-sheet-close>取消</button><button class="btn-mint" data-sheet-save="body">保存</button></div>';
+    const tab = state.body.tab;
+    if (tab === 'bmi') {                       // BMI 为派生值，无需手动录入
+      const v = metricSeries('bmi').slice(-1)[0];
+      html = '<h3>BMI</h3><p class="sheet-hint">BMI 由体重与身高自动计算，无需录入。</p>' +
+        '<div class="field"><label>当前 BMI</label><input id="b-single" type="number" value="' + (v ? v.value : '') + '" disabled></div>' +
+        '<div class="sheet-actions"><button class="btn-ghost" data-sheet-close>关闭</button></div>';
+    } else {
+      const unit = BODY_UNIT[tab];
+      const s = metricSeries(tab); const last = s.length ? s[s.length - 1].value : '';
+      html = '<h3>录入' + tabLabel(tab) + '</h3>' +
+        '<div class="field"><label>' + tabLabel(tab) + (unit ? ' (' + unit + ')' : '') + '</label><input id="b-single" type="number" step="0.1" value="' + last + '"></div>' +
+        '<div class="sheet-actions"><button class="btn-ghost" data-sheet-close>取消</button><button class="btn-mint" data-sheet-save="body">保存</button></div>';
+    }
   } else if (kind === 'body-history') {
     const keys = ['waist', 'navel', 'hip', 'arm', 'thigh'];
     const byDate = {};
@@ -905,17 +947,17 @@ function openSheet(kind) {
       else switchAction(document.getElementById('f-action').value);
     }
     if (k === 'body') {
-      saveBodyEntry({
-        measureDate: document.getElementById('b-date').value,
-        weight: document.getElementById('b-weight').value,
-        bodyFat: document.getElementById('b-fat').value,
-        waist: document.getElementById('b-waist').value,
-        navel: document.getElementById('b-navel').value,
-        hip: document.getElementById('b-hip').value,
-        arm: document.getElementById('b-arm').value,
-        thigh: document.getElementById('b-thigh').value,
-        restingHr: document.getElementById('b-hr').value
-      });
+      const tab = state.body.tab;
+      const raw = document.getElementById('b-single').value;
+      if (raw !== '' && raw != null && !isNaN(Number(raw))) {
+        const v = Number(raw);
+        const arr = state.metrics[tab] || (state.metrics[tab] = []);
+        const date = todayStr();
+        const existing = arr.find(p => p.date === date);
+        if (existing) existing.value = v; else arr.push({ date: date, value: v, source: 'manual' });
+        if (tab === 'weight') state.profile.weight = v;
+      }
+      notify();
     }
     sheet.classList.remove('show');
   }));
@@ -936,8 +978,8 @@ function init() {
   const bHr = document.getElementById('rp-demo-hr');
   if (bHr) bHr.addEventListener('click', () => handleAct('demo-hr'));
 
-  // 实时训练弹窗（心率提示 / 退出确认）：静态节点，一次性绑定
-  document.querySelectorAll('#hr-prompt [data-act], #leave-confirm [data-act]').forEach(b =>
+  // 实时训练弹窗（心率提示 / 退出确认 / 删除确认）：静态节点，一次性绑定
+  document.querySelectorAll('#hr-prompt [data-act], #leave-confirm [data-act], #del-confirm [data-act]').forEach(b =>
     b.addEventListener('click', () => handleAct(b.dataset.act, b)));
   // 手势返回（系统返回键 / Esc）等效触发二次确认
   document.addEventListener('keydown', (e) => {
