@@ -1,0 +1,85 @@
+<!doctype html>
+<!-- 平台: tablet | 保真度: hifi | 风格: J·LIFT（深森林绿） -->
+<!-- 组件: side-nav, statusbar, screen, live-overlay, summary-overlay, countdown, sheet, modal -->
+<!-- 模块: home(训练环+周概要), records, body, profile；数据模型与交互逻辑同手机端 jlift/ -->
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>J·LIFT — 平板端原型</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <!-- 平板外框：1024×768，左侧图标导航 + 右侧内容列 -->
+  <div class="phone">
+    <div class="glow one"></div><div class="glow two"></div><div class="glow three"></div><div class="rain"></div>
+
+    <!-- 侧边导航（纯图标，无文字；renderNav 注入按钮） -->
+    <nav class="bottom-nav" id="bottom-nav" aria-label="主导航"></nav>
+
+    <!-- 右侧内容列：状态栏 + 滚动屏 -->
+    <div class="screen-col">
+      <div class="statusbar">
+        <span>9:41</span>
+        <span class="right">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 18v-3M9 18v-7M14 18v-11M19 18v-5"/></svg>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="8" width="16" height="8" rx="2"/><path d="M21 11v2"/><path d="M6 10v4M9 10v4"/></svg>
+        </span>
+      </div>
+      <main class="screen" id="screen"></main>
+    </div>
+
+    <!-- 实时训练覆盖层 -->
+    <section class="live" id="live" aria-label="实时训练"></section>
+    <!-- 汇总 / 保存覆盖层 -->
+    <section class="summary" id="summary" aria-label="训练汇总"></section>
+    <!-- 倒计时覆盖层 -->
+    <div class="countdown" id="countdown" aria-live="assertive">
+      <div class="countdown-number" id="countdown-number">3</div>
+    </div>
+    <!-- 录入 / 编辑弹层 -->
+    <div class="sheet" id="sheet" aria-label="录入"></div>
+    <div class="toast" id="toast" role="status"></div>
+
+    <!-- 未连接心率带提示（可跳过） -->
+    <div class="modal" id="hr-prompt" role="dialog" aria-modal="true">
+      <div class="modal-card">
+        <div class="m-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20.5C12 20.5 4 14.5 4 8.8A4.3 4.3 0 0 1 12 7a4.3 4.3 0 0 1 8 1.8c0 5.7-8 11.7-8 11.7Z"/></svg></div>
+        <h3>未连接心率带</h3>
+        <p>本次训练将不记录心率数据，仍可按动作组记录训练量。可稍后在「我的」页连接心率带。</p>
+        <div class="modal-actions">
+          <button class="btn-ghost" data-act="hr-prompt-connect">去连接</button>
+          <button class="btn-mint" data-act="hr-prompt-skip" aria-label="取消">跳过，继续训练</button>
+        </div>
+      </div>
+    </div>
+    <!-- 退出训练确认（手势返回二次弹窗） -->
+    <div class="modal" id="leave-confirm" role="dialog" aria-modal="true">
+      <div class="modal-card">
+        <div class="m-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4l9 16H3Z"/><path d="M12 10v5M12 17.5v.5"/></svg></div>
+        <h3>退出训练？</h3>
+        <p id="leave-text">已录入的动作组将不会被保存。</p>
+        <div class="modal-actions">
+          <button class="btn-ghost" data-act="leave-cancel" aria-label="取消">继续训练</button>
+          <button class="btn-mint" data-act="leave-confirm">退出</button>
+        </div>
+      </div>
+    </div>
+    <!-- 结束训练确认（长按结束的二次确认） -->
+    <div class="modal" id="end-confirm" role="dialog" aria-modal="true">
+      <div class="modal-card">
+        <div class="m-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4l9 16H3Z"/><path d="M12 10v5M12 17.5v.5"/></svg></div>
+        <h3>确认结束训练？</h3>
+        <p id="end-text">本次数据将汇总并保存为训练记录。</p>
+        <div class="modal-actions">
+          <button class="btn-ghost" data-act="end-cancel" aria-label="取消">继续训练</button>
+          <button class="btn-mint" data-act="end-confirm">确认结束</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="store.js"></script>
+  <script src="components.js"></script>
+</body>
+</html>
